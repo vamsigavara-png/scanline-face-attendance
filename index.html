@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SCANLINE — Face Detection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<style>
+  :root{
+    --bg: #0a0d0b;
+    --panel: #10140f;
+    --line: #22301f;
+    --phosphor: #4dff9c;
+    --phosphor-dim: #244d33;
+    --amber: #ffb020;
+    --red: #ff5a5a;
+    --text: #d7f5e2;
+    --text-dim: #6f8f7a;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Space Grotesk', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+  body {
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(77,255,156,0.05), transparent 40%),
+      repeating-linear-gradient(0deg, rgba(77,255,156,0.02) 0px, rgba(77,255,156,0.02) 1px, transparent 1px, transparent 3px);
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+    margin-bottom: 22px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .brand .dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--phosphor-dim);
+    box-shadow: 0 0 0 0 rgba(77,255,156,0.6);
+  }
+  .brand .dot.live {
+    background: var(--phosphor);
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(77,255,156,0.55); }
+    70% { box-shadow: 0 0 0 8px rgba(77,255,156,0); }
+    100% { box-shadow: 0 0 0 0 rgba(77,255,156,0); }
+  }
+  .brand h1 {
+    font-family: var(--mono);
+    font-size: 20px;
+    letter-spacing: 0.14em;
+    margin: 0;
+    font-weight: 700;
+    color: var(--phosphor);
+  }
+  .brand span.sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+  }
+  .status-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .status-tag b { color: var(--amber); }
+
+  /* Layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  /* Viewfinder */
+  .viewfinder {
+    position: relative;
+    background: #000;
+    border: 1px solid var(--line);
+    aspect-ratio: 4/3;
+    overflow: hidden;
+    border-radius: 2px;
+  }
+  .viewfinder video, .viewfinder img, .viewfinder canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  .viewfinder video, .viewfinder img { display: none; }
+
+  .corner {
+    position: absolute;
+    width: 22px; height: 22px;
+    border: 2px solid var(--phosphor);
+    opacity: 0.85;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .corner.tl { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+  .corner.tr { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+  .corner.bl { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+  .corner.br { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+
+  .scanline {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--phosphor), transparent);
+    opacity: 0.5;
+    animation: sweep 3.2s linear infinite;
+    z-index: 4;
+    pointer-events: none;
+  }
+  @keyframes sweep {
+    0% { top: 0%; }
+    100% { top: 100%; }
+  }
+
+  .empty-state {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-align: center;
+    z-index: 2;
+    padding: 20px;
+  }
+  .empty-state .glyph {
+    font-size: 30px;
+    color: var(--phosphor-dim);
+  }
+
+  .vf-label {
+    position: absolute;
+    bottom: 10px; left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--phosphor);
+    background: rgba(0,0,0,0.55);
+    padding: 3px 10px;
+    border: 1px solid var(--phosphor-dim);
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .attendance-toast {
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%) translateY(-12px);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    color: var(--bg);
+    background: var(--phosphor);
+    padding: 8px 14px;
+    border: 1px solid var(--phosphor);
+    z-index: 6;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    white-space: nowrap;
+    max-width: 92%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .attendance-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .attendance-toast.already {
+    background: var(--amber);
+    border-color: var(--amber);
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  button, .file-btn {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    text-transform: uppercase;
+  }
+  button:hover, .file-btn:hover {
+    border-color: var(--phosphor);
+    color: var(--phosphor);
+  }
+  button.primary {
+    border-color: var(--phosphor-dim);
+    color: var(--phosphor);
+  }
+  button.primary:hover { border-color: var(--phosphor); }
+  button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  button:disabled:hover { border-color: var(--line); color: var(--text); }
+  input[type=file] { display: none; }
+
+  .toggles {
+    display: flex;
+    gap: 14px;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+    flex-wrap: wrap;
+  }
+  .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .toggles input { accent-color: #4dff9c; }
+
+  /* HUD panel */
+  .hud {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 100%;
+  }
+  .hud h2 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin: 0 0 4px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+  }
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .metric-row .k { color: var(--text-dim); letter-spacing: 0.04em; }
+  .metric-row .v { color: var(--phosphor); font-weight: 600; }
+
+  .face-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .face-card {
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    background: #0c100d;
+  }
+  .face-card .fid {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .expr-bar-row {
+    display: grid;
+    grid-template-columns: 62px 1fr 34px;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 3px;
+  }
+  .expr-bar-track {
+    height: 5px;
+    background: #16201a;
+    position: relative;
+    overflow: hidden;
+  }
+  .expr-bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--phosphor);
+  }
+  .expr-bar-row .pct { text-align: right; color: var(--text); }
+
+  .no-faces {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    padding: 8px 0;
+  }
+
+  /* Saved records */
+  .records-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .record-card {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--line);
+    background: #0c100d;
+    padding: 8px 10px;
+  }
+  .record-card img {
+    width: 44px; height: 44px;
+    object-fit: cover;
+    border: 1px solid var(--phosphor-dim);
+  }
+  .record-meta {
+    min-width: 0;
+  }
+  .record-meta .rname {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .record-meta .rphone {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--phosphor);
+  }
+  .record-meta .rtime {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-dim);
+  }
+  .record-del {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 5px 8px;
+    cursor: pointer;
+  }
+  .record-del:hover { border-color: var(--red); color: var(--red); }
+
+  .hud-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .hud-actions button {
+    flex: 1;
+    font-size: 10.5px;
+    padding: 8px 10px;
+  }
+
+  .storage-note {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.03em;
+    line-height: 1.5;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5,7,6,0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 20px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--phosphor-dim);
+    width: 100%;
+    max-width: 380px;
+    padding: 20px;
+  }
+  .modal h3 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--phosphor);
+    margin: 0 0 14px;
+  }
+  .modal .snap-preview {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    border: 1px solid var(--line);
+    margin-bottom: 14px;
+    background: #000;
+  }
+  .modal label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+    margin-top: 12px;
+  }
+  .modal input[type=text], .modal input[type=tel] {
+    width: 100%;
+    background: #0c100d;
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 10px;
+  }
+  .modal input[type=text]:focus, .modal input[type=tel]:focus {
+    outline: none;
+    border-color: var(--phosphor);
+  }
+  .modal .modal-error {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--red);
+    margin-top: 8px;
+    min-height: 14px;
+  }
+  .modal .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .modal .modal-actions button {
+    flex: 1;
+  }
+
+  footer {
+    margin-top: 26px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  footer .flicker {
+    animation: flicker 4s infinite;
+  }
+  @keyframes flicker {
+    0%, 96%, 100% { opacity: 1; }
+    97% { opacity: 0.4; }
+    98% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="dot" id="liveDot"></div>
+      <div>
+        <h1>SCANLINE</h1>
+        <div class="sub">Face detection &amp; attendance HUD</div>
+      </div>
+    </div>
+    <div class="status-tag" id="statusTag">
+      MODEL: <b id="modelStatus">LOADING…</b><br>
+      SOURCE: <span id="sourceStatus">NONE</span>
+    </div>
+    <button id="adminToggleBtn" style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.06em;background:var(--panel);color:var(--text-dim);border:1px solid var(--line);padding:8px 12px;cursor:pointer;text-transform:uppercase;">🔒 Admin</button>
+  </header>
+
+  <div class="grid">
+    <div>
+      <div class="viewfinder" id="viewfinder">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="scanline" id="scanline" style="display:none;"></div>
+        <video id="video" muted playsinline></video>
+        <img id="photo" alt="Uploaded photo for face detection">
+        <canvas id="overlay"></canvas>
+        <div class="empty-state" id="emptyState">
+          <div class="glyph">◎</div>
+          <div>NO SIGNAL<br>Start the camera or load an image to begin scanning</div>
+        </div>
+        <div class="vf-label" id="vfLabel" style="display:none;">SCANNING</div>
+        <div class="attendance-toast" id="attendanceToast"></div>
+      </div>
+
+      <div class="controls">
+        <button class="primary" id="camBtn" disabled>Start Camera</button>
+        <label class="file-btn" for="fileInput">Load Image</label>
+        <input type="file" id="fileInput" accept="image/*">
+        <button id="saveBtn" disabled>Register Face</button>
+        <button id="resetBtn" disabled>Clear</button>
+      </div>
+
+      <div class="toggles">
+        <label><input type="checkbox" id="toggleBoxes" checked> Bounding boxes</label>
+        <label><input type="checkbox" id="toggleLandmarks" checked> Landmarks</label>
+        <label><input type="checkbox" id="toggleExpr" checked> Expressions</label>
+      </div>
+    </div>
+
+    <div class="hud">
+      <div>
+        <h2>Session</h2>
+        <div class="metric-row"><span class="k">Faces detected</span><span class="v" id="faceCount">0</span></div>
+        <div class="metric-row"><span class="k">Frame rate</span><span class="v" id="fpsCount">—</span></div>
+        <div class="metric-row"><span class="k">Avg. confidence</span><span class="v" id="avgConf">—</span></div>
+      </div>
+
+      <div>
+        <h2>Detected faces</h2>
+        <div class="face-list" id="faceList">
+          <div class="no-faces">No faces in frame yet.</div>
+        </div>
+      </div>
+
+      <div>
+        <h2 style="display:flex;justify-content:space-between;align-items:baseline;">
+          <span>Enrolled people</span>
+          <button id="lockBtn" style="display:none;font-family:var(--mono);font-size:9.5px;background:transparent;border:1px solid var(--line);color:var(--text-dim);padding:4px 8px;cursor:pointer;text-transform:uppercase;">Lock</button>
+        </h2>
+        <div id="adminLockedState">
+          <div class="no-faces">🔒 Admin access required to view saved names, numbers and photos.</div>
+          <div class="hud-actions" style="margin-top:10px;">
+            <button class="primary" id="unlockBtn">Unlock admin view</button>
+          </div>
+        </div>
+        <div id="adminUnlockedState" style="display:none;">
+          <div class="records-list" id="recordsList">
+            <div class="no-faces">No faces saved yet.</div>
+          </div>
+          <div class="hud-actions" style="margin-top:10px;">
+            <button id="exportBtn">Export JSON</button>
+            <button id="clearRecordsBtn">Clear all</button>
+          </div>
+        </div>
+        <div class="storage-note" id="storageNote">Saved records are stored locally in this browser only.</div>
+      </div>
+
+      <div>
+        <h2>Attendance log</h2>
+        <div id="attendanceLockedState">
+          <div class="no-faces">🔒 Admin access required to view attendance.</div>
+        </div>
+        <div id="attendanceUnlockedState" style="display:none;">
+          <div class="metric-row" style="margin-bottom:10px;">
+            <span class="k">Viewing date</span>
+            <input type="date" id="attendanceDateInput" style="font-family:var(--mono);font-size:11px;background:#0c100d;border:1px solid var(--line);color:var(--text);padding:5px 7px;">
+          </div>
+          <div class="records-list" id="attendanceList">
+            <div class="no-faces">No attendance marked for this date.</div>
+          </div>
+          <div class="hud-actions" style="margin-top:10px;">
+            <button id="exportAttendanceBtn">Export JSON</button>
+            <button id="clearAttendanceBtn">Clear this date</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal">
+      <h3>Register new face</h3>
+      <img class="snap-preview" id="snapPreview" alt="Captured face snapshot">
+      <label for="nameInput">Name</label>
+      <input type="text" id="nameInput" placeholder="Full name" autocomplete="off">
+      <label for="phoneInput">Phone number</label>
+      <input type="tel" id="phoneInput" placeholder="e.g. +1 555 123 4567" autocomplete="off">
+      <div class="modal-error" id="modalError"></div>
+      <div class="modal-actions">
+        <button id="modalCancelBtn">Cancel</button>
+        <button class="primary" id="modalSaveBtn">Register</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="adminModalBackdrop">
+    <div class="modal">
+      <h3>Admin access</h3>
+      <label for="adminIdInput">Admin ID</label>
+      <input type="text" id="adminIdInput" placeholder="Admin ID" autocomplete="off">
+      <label for="adminPinInput">Password</label>
+      <input type="password" id="adminPinInput" placeholder="••••••••••" autocomplete="off">
+      <div class="modal-error" id="adminModalError"></div>
+      <div class="modal-actions">
+        <button id="adminCancelBtn">Cancel</button>
+        <button class="primary" id="adminSubmitBtn">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>face-api.js · detector + landmarks + expressions + recognition</span>
+    <span class="flicker" id="clock">--:--:--</span>
+  </footer>
+
+</div>
+
+<script>
+const video = document.getElementById('video');
+const photo = document.getElementById('photo');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const viewfinder = document.getElementById('viewfinder');
+const emptyState = document.getElementById('emptyState');
+const scanline = document.getElementById('scanline');
+const vfLabel = document.getElementById('vfLabel');
+const liveDot = document.getElementById('liveDot');
+const modelStatus = document.getElementById('modelStatus');
+const sourceStatus = document.getElementById('sourceStatus');
+const camBtn = document.getElementById('camBtn');
+const resetBtn = document.getElementById('resetBtn');
+const saveBtn = document.getElementById('saveBtn');
+const fileInput = document.getElementById('fileInput');
+const modalBackdrop = document.getElementById('modalBackdrop');
+const snapPreview = document.getElementById('snapPreview');
+const nameInput = document.getElementById('nameInput');
+const phoneInput = document.getElementById('phoneInput');
+const modalError = document.getElementById('modalError');
+const modalCancelBtn = document.getElementById('modalCancelBtn');
+const modalSaveBtn = document.getElementById('modalSaveBtn');
+const recordsList = document.getElementById('recordsList');
+const exportBtn = document.getElementById('exportBtn');
+const clearRecordsBtn = document.getElementById('clearRecordsBtn');
+const storageNote = document.getElementById('storageNote');
+const adminToggleBtn = document.getElementById('adminToggleBtn');
+const adminLockedState = document.getElementById('adminLockedState');
+const adminUnlockedState = document.getElementById('adminUnlockedState');
+const unlockBtn = document.getElementById('unlockBtn');
+const lockBtn = document.getElementById('lockBtn');
+const adminModalBackdrop = document.getElementById('adminModalBackdrop');
+const adminIdInput = document.getElementById('adminIdInput');
+const adminPinInput = document.getElementById('adminPinInput');
+const adminModalError = document.getElementById('adminModalError');
+const adminCancelBtn = document.getElementById('adminCancelBtn');
+const adminSubmitBtn = document.getElementById('adminSubmitBtn');
+const faceCountEl = document.getElementById('faceCount');
+const fpsCountEl = document.getElementById('fpsCount');
+const avgConfEl = document.getElementById('avgConf');
+const faceListEl = document.getElementById('faceList');
+const toggleBoxes = document.getElementById('toggleBoxes');
+const toggleLandmarks = document.getElementById('toggleLandmarks');
+const toggleExpr = document.getElementById('toggleExpr');
+const attendanceToast = document.getElementById('attendanceToast');
+const attendanceLockedState = document.getElementById('attendanceLockedState');
+const attendanceUnlockedState = document.getElementById('attendanceUnlockedState');
+const attendanceDateInput = document.getElementById('attendanceDateInput');
+const attendanceList = document.getElementById('attendanceList');
+const exportAttendanceBtn = document.getElementById('exportAttendanceBtn');
+const clearAttendanceBtn = document.getElementById('clearAttendanceBtn');
+
+let modelsReady = false;
+let mode = null; // 'camera' | 'image'
+let stream = null;
+let rafId = null;
+let lastFrameTime = performance.now();
+let fpsSmoothed = null;
+let facesPresent = false;
+let records = [];
+let attendance = [];
+let pendingSnapshot = null;
+let pendingDescriptor = null;
+let recognitionTimer = null;
+let lastToastPersonId = null;
+let lastToastAt = 0;
+
+const RECOGNITION_THRESHOLD = 0.55; // lower = stricter match
+
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+
+function setClock(){
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB');
+}
+setInterval(setClock, 1000);
+setClock();
+
+async function loadModels(){
+  try{
+    if(typeof faceapi === 'undefined'){
+      throw new Error('face-api library failed to load from CDN');
+    }
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    modelsReady = true;
+    modelStatus.textContent = 'READY';
+    modelStatus.style.color = 'var(--phosphor)';
+    camBtn.disabled = false;
+  }catch(err){
+    modelStatus.textContent = 'FAILED';
+    modelStatus.style.color = 'var(--red)';
+    console.error(err);
+    emptyState.innerHTML = '<div class="glyph">✕</div><div>MODEL LOAD FAILED<br>Check your connection and reload the page</div>';
+  }
+}
+loadModels();
+
+function resizeOverlayTo(el){
+  const rect = viewfinder.getBoundingClientRect();
+  overlay.width = rect.width;
+  overlay.height = rect.height;
+}
+
+function showEmpty(show){
+  emptyState.style.display = show ? 'flex' : 'none';
+}
+
+async function startCamera(){
+  if(!modelsReady) return;
+  stopAll(false);
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    photo.style.display = 'none';
+    await video.play();
+    mode = 'camera';
+    sourceStatus.textContent = 'WEBCAM';
+    liveDot.classList.add('live');
+    scanline.style.display = 'block';
+    vfLabel.style.display = 'block';
+    resetBtn.disabled = false;
+    camBtn.textContent = 'Stop Camera';
+    showEmpty(false);
+    resizeOverlayTo(video);
+    detectLoopCamera();
+    startRecognitionTimer();
+  }catch(err){
+    alert('Could not access the camera. Check browser permissions and try again.');
+    console.error(err);
+  }
+}
+
+function stopCamera(){
+  if(stream){
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  video.pause();
+  video.srcObject = null;
+  liveDot.classList.remove('live');
+  scanline.style.display = 'none';
+  vfLabel.style.display = 'none';
+  if(rafId) cancelAnimationFrame(rafId);
+  stopRecognitionTimer();
+}
+
+function stopAll(showEmptyState = true){
+  stopCamera();
+  video.style.display = 'none';
+  photo.style.display = 'none';
+  ctx.clearRect(0,0,overlay.width, overlay.height);
+  mode = null;
+  sourceStatus.textContent = 'NONE';
+  camBtn.textContent = 'Start Camera';
+  resetBtn.disabled = true;
+  faceCountEl.textContent = '0';
+  fpsCountEl.textContent = '—';
+  avgConfEl.textContent = '—';
+  fpsSmoothed = null;
+  facesPresent = false;
+  saveBtn.disabled = true;
+  faceListEl.innerHTML = '<div class="no-faces">No faces in frame yet.</div>';
+  if(showEmptyState) showEmpty(true);
+}
+
+camBtn.addEventListener('click', () => {
+  if(mode === 'camera'){
+    stopAll(true);
+  } else {
+    startCamera();
+  }
+});
+
+resetBtn.addEventListener('click', () => stopAll(true));
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if(!file || !modelsReady) return;
+  stopCamera();
+  const url = URL.createObjectURL(file);
+  photo.onload = () => {
+    video.style.display = 'none';
+    photo.style.display = 'block';
+    mode = 'image';
+    sourceStatus.textContent = 'IMAGE';
+    resetBtn.disabled = false;
+    camBtn.textContent = 'Start Camera';
+    showEmpty(false);
+    resizeOverlayTo(photo);
+    detectStill();
+  };
+  photo.src = url;
+});
+
+const detectionOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+
+function scaleFor(el){
+  const rect = viewfinder.getBoundingClientRect();
+  const naturalW = el.videoWidth || el.naturalWidth || rect.width;
+  const naturalH = el.videoHeight || el.naturalHeight || rect.height;
+  // object-fit: cover mapping
+  const scale = Math.max(rect.width / naturalW, rect.height / naturalH);
+  const offsetX = (rect.width - naturalW * scale) / 2;
+  const offsetY = (rect.height - naturalH * scale) / 2;
+  return { scale, offsetX, offsetY, width: rect.width, height: rect.height };
+}
+
+function drawResults(results, el){
+  resizeOverlayTo(el);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  const { scale, offsetX, offsetY } = scaleFor(el);
+
+  faceCountEl.textContent = results.length;
+  facesPresent = results.length > 0;
+  saveBtn.disabled = !facesPresent;
+  if(results.length === 0){
+    faceListEl.innerHTML = '<div class="no-faces">No faces in frame.</div>';
+    avgConfEl.textContent = '—';
+    return;
+  }
+
+  let confSum = 0;
+  let cardsHtml = '';
+
+  results.forEach((r, i) => {
+    const box = r.detection.box;
+    const x = box.x * scale + offsetX;
+    const y = box.y * scale + offsetY;
+    const w = box.width * scale;
+    const h = box.height * scale;
+    confSum += r.detection.score;
+
+    if(toggleBoxes.checked){
+      ctx.strokeStyle = '#4dff9c';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.font = '11px "IBM Plex Mono", monospace';
+      const label = `FACE_${String(i+1).padStart(2,'0')}  ${(r.detection.score*100).toFixed(0)}%`;
+      const textW = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(10,13,11,0.85)';
+      ctx.fillRect(x - 1, y - 18, textW + 10, 16);
+      ctx.fillStyle = '#4dff9c';
+      ctx.fillText(label, x + 4, y - 6);
+    }
+
+    if(toggleLandmarks.checked && r.landmarks){
+      ctx.fillStyle = '#ffb020';
+      r.landmarks.positions.forEach(p => {
+        const px = p.x * scale + offsetX;
+        const py = p.y * scale + offsetY;
+        ctx.beginPath();
+        ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    // face card
+    let exprHtml = '';
+    if(toggleExpr.checked && r.expressions){
+      const sorted = Object.entries(r.expressions).sort((a,b) => b[1]-a[1]).slice(0,3);
+      exprHtml = sorted.map(([name, val]) => `
+        <div class="expr-bar-row">
+          <span>${name}</span>
+          <div class="expr-bar-track"><div class="expr-bar-fill" style="width:${(val*100).toFixed(0)}%"></div></div>
+          <span class="pct">${(val*100).toFixed(0)}%</span>
+        </div>
+      `).join('');
+    }
+
+    cardsHtml += `
+      <div class="face-card">
+        <div class="fid">FACE_${String(i+1).padStart(2,'0')} · ${(r.detection.score*100).toFixed(1)}% conf</div>
+        ${exprHtml}
+      </div>
+    `;
+  });
+
+  faceListEl.innerHTML = cardsHtml;
+  avgConfEl.textContent = ((confSum / results.length) * 100).toFixed(1) + '%';
+}
+
+async function detectStill(){
+  const results = await faceapi
+    .detectAllFaces(photo, detectionOptions)
+    .withFaceLandmarks()
+    .withFaceExpressions();
+  drawResults(results, photo);
+}
+
+async function detectLoopCamera(){
+  if(mode !== 'camera' || video.paused || video.ended){
+    return;
+  }
+  const now = performance.now();
+  const dt = now - lastFrameTime;
+  lastFrameTime = now;
+  const instFps = 1000 / dt;
+  fpsSmoothed = fpsSmoothed === null ? instFps : fpsSmoothed * 0.85 + instFps * 0.15;
+  fpsCountEl.textContent = fpsSmoothed.toFixed(0) + ' fps';
+
+  try{
+    const results = await faceapi
+      .detectAllFaces(video, detectionOptions)
+      .withFaceLandmarks()
+      .withFaceExpressions();
+    drawResults(results, video);
+  }catch(err){
+    console.error(err);
+  }
+
+  rafId = requestAnimationFrame(detectLoopCamera);
+}
+
+window.addEventListener('resize', () => {
+  if(mode === 'camera') resizeOverlayTo(video);
+  if(mode === 'image') resizeOverlayTo(photo);
+});
+
+/* ---------- Save face: snapshot + name/number capture ---------- */
+
+const STORAGE_KEY = 'scanline_face_records';
+let storageAvailable = true;
+
+function loadRecords(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    records = raw ? JSON.parse(raw) : [];
+  }catch(err){
+    storageAvailable = false;
+    records = [];
+    storageNote.textContent = 'Local storage is unavailable in this browser — saved records will be lost on reload.';
+  }
+}
+
+function persistRecords(){
+  if(!storageAvailable) return;
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  }catch(err){
+    storageAvailable = false;
+    storageNote.textContent = 'Could not write to local storage (it may be full or blocked) — new records won\'t persist after reload.';
+  }
+}
+
+function renderRecords(){
+  if(records.length === 0){
+    recordsList.innerHTML = '<div class="no-faces">No faces saved yet.</div>';
+    return;
+  }
+  recordsList.innerHTML = records.slice().reverse().map(r => `
+    <div class="record-card">
+      <img src="${r.photo}" alt="${escapeHtml(r.name)}">
+      <div class="record-meta">
+        <div class="rname">${escapeHtml(r.name)}</div>
+        <div class="rphone">${escapeHtml(r.phone)}</div>
+        <div class="rtime">${new Date(r.timestamp).toLocaleString()}</div>
+      </div>
+      <button class="record-del" data-id="${r.id}">Delete</button>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+recordsList.addEventListener('click', (e) => {
+  const btn = e.target.closest('.record-del');
+  if(!btn) return;
+  const id = btn.getAttribute('data-id');
+  records = records.filter(r => String(r.id) !== String(id));
+  // also drop any attendance history tied to a deleted person
+  attendance = attendance.filter(a => String(a.personId) !== String(id));
+  persistRecords();
+  persistAttendance();
+  renderRecords();
+  renderAttendanceForDate();
+});
+
+/* ---------- Attendance log ---------- */
+
+const ATTENDANCE_KEY = 'scanline_attendance_log';
+
+function loadAttendance(){
+  try{
+    const raw = localStorage.getItem(ATTENDANCE_KEY);
+    attendance = raw ? JSON.parse(raw) : [];
+  }catch(err){
+    attendance = [];
+  }
+}
+
+function persistAttendance(){
+  if(!storageAvailable) return;
+  try{
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(attendance));
+  }catch(err){
+    console.error('Could not persist attendance', err);
+  }
+}
+
+function renderAttendanceForDate(){
+  if(!attendanceDateInput.value) attendanceDateInput.value = todayStr();
+  const date = attendanceDateInput.value;
+  const entries = attendance.filter(a => a.date === date).sort((a, b) => a.time.localeCompare(b.time));
+  if(entries.length === 0){
+    attendanceList.innerHTML = '<div class="no-faces">No attendance marked for this date.</div>';
+    return;
+  }
+  attendanceList.innerHTML = entries.map(a => `
+    <div class="record-card">
+      <img src="${a.photo}" alt="${escapeHtml(a.name)}">
+      <div class="record-meta">
+        <div class="rname">${escapeHtml(a.name)}</div>
+        <div class="rphone">${escapeHtml(a.phone)}</div>
+        <div class="rtime">${new Date(a.time).toLocaleTimeString()}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+attendanceDateInput.addEventListener('change', renderAttendanceForDate);
+
+exportAttendanceBtn.addEventListener('click', () => {
+  if(attendance.length === 0){
+    alert('No attendance records to export yet.');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(attendance, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'scanline_attendance.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+clearAttendanceBtn.addEventListener('click', () => {
+  const date = attendanceDateInput.value || todayStr();
+  const hasEntries = attendance.some(a => a.date === date);
+  if(!hasEntries) return;
+  if(!confirm(`Delete all attendance entries for ${date}? This cannot be undone.`)) return;
+  attendance = attendance.filter(a => a.date !== date);
+  persistAttendance();
+  renderAttendanceForDate();
+});
+
+function showAttendanceToast(text, already){
+  attendanceToast.textContent = text;
+  attendanceToast.classList.toggle('already', !!already);
+  attendanceToast.classList.add('show');
+  clearTimeout(showAttendanceToast._t);
+  showAttendanceToast._t = setTimeout(() => attendanceToast.classList.remove('show'), 3200);
+}
+
+function markAttendance(record){
+  const date = todayStr();
+  const already = attendance.some(a => a.personId === record.id && a.date === date);
+  const now = Date.now();
+  const isSamePersonRecentToast = lastToastPersonId === record.id && (now - lastToastAt) < 6000;
+  if(already){
+    if(!isSamePersonRecentToast){
+      showAttendanceToast(`${record.name} — already marked today`, true);
+      lastToastPersonId = record.id;
+      lastToastAt = now;
+    }
+    return;
+  }
+  attendance.push({
+    id: record.id + '_' + date,
+    personId: record.id,
+    name: record.name,
+    phone: record.phone,
+    photo: record.photo,
+    date,
+    time: new Date().toISOString()
+  });
+  persistAttendance();
+  renderAttendanceForDate();
+  showAttendanceToast(`✔ ${record.name} — attendance marked`, false);
+  lastToastPersonId = record.id;
+  lastToastAt = now;
+}
+
+async function runRecognitionTick(){
+  if(mode !== 'camera' || !modelsReady) return;
+  const enrolled = records.filter(r => Array.isArray(r.descriptor) && r.descriptor.length > 0);
+  if(enrolled.length === 0) return;
+  try{
+    const results = await faceapi
+      .detectAllFaces(video, detectionOptions)
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+    if(results.length === 0) return;
+    results.forEach(r => {
+      let best = null;
+      let bestDist = Infinity;
+      enrolled.forEach(rec => {
+        const dist = faceapi.euclideanDistance(r.descriptor, rec.descriptor);
+        if(dist < bestDist){
+          bestDist = dist;
+          best = rec;
+        }
+      });
+      if(best && bestDist < RECOGNITION_THRESHOLD){
+        markAttendance(best);
+      }
+    });
+  }catch(err){
+    console.error(err);
+  }
+}
+
+function startRecognitionTimer(){
+  stopRecognitionTimer();
+  recognitionTimer = setInterval(runRecognitionTick, 1200);
+}
+
+function stopRecognitionTimer(){
+  if(recognitionTimer){
+    clearInterval(recognitionTimer);
+    recognitionTimer = null;
+  }
+}
+
+function getActiveSource(){
+  return mode === 'camera' ? video : (mode === 'image' ? photo : null);
+}
+
+function captureSnapshot(){
+  const source = getActiveSource();
+  if(!source) return null;
+  const w = source.videoWidth || source.naturalWidth;
+  const h = source.videoHeight || source.naturalHeight;
+  if(!w || !h) return null;
+  const snapCanvas = document.createElement('canvas');
+  snapCanvas.width = w;
+  snapCanvas.height = h;
+  const sctx = snapCanvas.getContext('2d');
+  sctx.drawImage(source, 0, 0, w, h);
+  // downscale large snapshots so storage stays lightweight
+  const maxDim = 480;
+  if(Math.max(w, h) > maxDim){
+    const scale = maxDim / Math.max(w, h);
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = Math.round(w * scale);
+    outCanvas.height = Math.round(h * scale);
+    outCanvas.getContext('2d').drawImage(snapCanvas, 0, 0, outCanvas.width, outCanvas.height);
+    return outCanvas.toDataURL('image/jpeg', 0.85);
+  }
+  return snapCanvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function openSaveModal(){
+  if(!facesPresent) return;
+  saveBtn.disabled = true;
+  pendingSnapshot = captureSnapshot();
+  pendingDescriptor = null;
+  if(!pendingSnapshot){
+    alert('Could not capture the current frame. Try again.');
+    saveBtn.disabled = !facesPresent;
+    return;
+  }
+  const source = getActiveSource();
+  try{
+    const result = await faceapi
+      .detectSingleFace(source, detectionOptions)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    if(result) pendingDescriptor = Array.from(result.descriptor);
+  }catch(err){
+    console.error(err);
+  }
+  saveBtn.disabled = !facesPresent;
+  snapPreview.src = pendingSnapshot;
+  nameInput.value = '';
+  phoneInput.value = '';
+  modalError.textContent = pendingDescriptor ? '' : 'Could not read this face clearly — attendance auto check-in may not recognize this person. You can still save.';
+  modalBackdrop.classList.add('open');
+  setTimeout(() => nameInput.focus(), 50);
+}
+
+function closeSaveModal(){
+  modalBackdrop.classList.remove('open');
+  pendingSnapshot = null;
+  pendingDescriptor = null;
+}
+
+saveBtn.addEventListener('click', openSaveModal);
+modalCancelBtn.addEventListener('click', closeSaveModal);
+modalBackdrop.addEventListener('click', (e) => {
+  if(e.target === modalBackdrop) closeSaveModal();
+});
+
+modalSaveBtn.addEventListener('click', () => {
+  const name = nameInput.value.trim();
+  const phone = phoneInput.value.trim();
+  if(!name){
+    modalError.textContent = 'Please enter a name.';
+    nameInput.focus();
+    return;
+  }
+  if(!phone){
+    modalError.textContent = 'Please enter a phone number.';
+    phoneInput.focus();
+    return;
+  }
+  if(!pendingSnapshot){
+    modalError.textContent = 'Snapshot missing — please try capturing again.';
+    return;
+  }
+  records.push({
+    id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    name,
+    phone,
+    photo: pendingSnapshot,
+    descriptor: pendingDescriptor,
+    timestamp: new Date().toISOString(),
+    faceCount: parseInt(faceCountEl.textContent, 10) || 1
+  });
+  persistRecords();
+  renderRecords();
+  closeSaveModal();
+});
+
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && modalBackdrop.classList.contains('open')) closeSaveModal();
+  if(e.key === 'Enter' && modalBackdrop.classList.contains('open') && document.activeElement !== nameInput && document.activeElement !== phoneInput){
+    modalSaveBtn.click();
+  }
+});
+
+exportBtn.addEventListener('click', () => {
+  if(records.length === 0){
+    alert('No saved records to export yet.');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(records, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'scanline_records.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+clearRecordsBtn.addEventListener('click', () => {
+  if(records.length === 0) return;
+  if(!confirm('Delete all saved records? This cannot be undone.')) return;
+  records = [];
+  persistRecords();
+  renderRecords();
+});
+
+/* ---------- Admin gate ----------
+   NOTE: this is a client-side-only PIN check inside a static HTML file.
+   Anyone can view this file's source and read the PIN or bypass the
+   check entirely — it only stops casual browsing of the records panel,
+   it is NOT real security. For actual access control, the saved data
+   needs to live behind a real backend with server-side auth. */
+const ADMIN_ID = 'Vamsi77';
+const ADMIN_PIN = '9398504835';
+const ADMIN_SESSION_KEY = 'scanline_admin_unlocked';
+let adminUnlocked = false;
+
+function setAdminUnlocked(unlocked){
+  adminUnlocked = unlocked;
+  adminLockedState.style.display = unlocked ? 'none' : 'block';
+  adminUnlockedState.style.display = unlocked ? 'block' : 'none';
+  attendanceLockedState.style.display = unlocked ? 'none' : 'block';
+  attendanceUnlockedState.style.display = unlocked ? 'block' : 'none';
+  lockBtn.style.display = unlocked ? 'inline-block' : 'none';
+  adminToggleBtn.textContent = unlocked ? '🔓 Admin' : '🔒 Admin';
+  try{
+    if(unlocked) sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
+    else sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  }catch(err){ /* sessionStorage unavailable — unlock still works for this page view */ }
+  if(unlocked){
+    renderRecords();
+    renderAttendanceForDate();
+  }
+}
+
+function openAdminModal(){
+  adminIdInput.value = '';
+  adminPinInput.value = '';
+  adminModalError.textContent = '';
+  adminModalBackdrop.classList.add('open');
+  setTimeout(() => adminIdInput.focus(), 50);
+}
+
+function closeAdminModal(){
+  adminModalBackdrop.classList.remove('open');
+}
+
+adminToggleBtn.addEventListener('click', () => {
+  if(adminUnlocked){
+    setAdminUnlocked(false);
+  } else {
+    openAdminModal();
+  }
+});
+unlockBtn.addEventListener('click', openAdminModal);
+lockBtn.addEventListener('click', () => setAdminUnlocked(false));
+adminCancelBtn.addEventListener('click', closeAdminModal);
+adminModalBackdrop.addEventListener('click', (e) => {
+  if(e.target === adminModalBackdrop) closeAdminModal();
+});
+adminSubmitBtn.addEventListener('click', () => {
+  if(adminIdInput.value.trim() === ADMIN_ID && adminPinInput.value === ADMIN_PIN){
+    setAdminUnlocked(true);
+    closeAdminModal();
+  } else {
+    adminModalError.textContent = 'Incorrect ID or password.';
+    adminPinInput.value = '';
+    adminIdInput.focus();
+  }
+});
+adminIdInput.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') adminPinInput.focus();
+});
+adminPinInput.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') adminSubmitBtn.click();
+});
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && adminModalBackdrop.classList.contains('open')) closeAdminModal();
+});
+
+// restore admin unlock for this browser tab session only
+try{
+  if(sessionStorage.getItem(ADMIN_SESSION_KEY) === '1') setAdminUnlocked(true);
+}catch(err){ /* sessionStorage unavailable, stays locked by default */ }
+
+loadRecords();
+loadAttendance();
+attendanceDateInput.value = todayStr();
+if(adminUnlocked){
+  renderRecords();
+  renderAttendanceForDate();
+}
+</script>
+</body>
+</html>
