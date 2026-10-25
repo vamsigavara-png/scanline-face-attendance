@@ -104,6 +104,22 @@
   @media (max-width: 760px) {
     .grid { grid-template-columns: 1fr; }
   }
+  @media (max-width: 520px) {
+    .wrap { padding: 18px 14px 32px; }
+    header { align-items: center; }
+    .brand { gap: 8px; }
+    .brand h1 { font-size: 18px; }
+    .brand span.sub { font-size: 10px; }
+    .status-tag { text-align: left; font-size: 10px; }
+    #adminToggleBtn { margin-left: auto; }
+    .viewfinder { aspect-ratio: 4 / 3; }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .controls button, .controls .file-btn { min-height: 44px; width: 100%; padding: 10px 8px; text-align: center; }
+    .toggles { gap: 10px 14px; font-size: 10px; }
+    .hud { padding: 13px; }
+    .empty-state { font-size: 11px; padding: 16px; }
+    footer { font-size: 9px; }
+  }
 
   /* Viewfinder */
   .viewfinder {
@@ -165,6 +181,15 @@
   .empty-state .glyph {
     font-size: 30px;
     color: var(--phosphor-dim);
+  }
+  .empty-title {
+    color: var(--amber);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+  }
+  .empty-hint {
+    max-width: 360px;
+    line-height: 1.6;
   }
 
   .vf-label {
@@ -537,9 +562,10 @@
         <video id="video" muted playsinline></video>
         <img id="photo" alt="Uploaded photo for face detection">
         <canvas id="overlay"></canvas>
-        <div class="empty-state" id="emptyState">
+        <div class="empty-state" id="emptyState" role="status" aria-live="polite">
           <div class="glyph">◎</div>
-          <div>NO SIGNAL<br>Start the camera or load an image to begin scanning</div>
+          <div class="empty-title" id="emptyTitle">CAMERA OFFLINE</div>
+          <div class="empty-hint" id="emptyHint">Select Start Camera and allow camera access, or load an image to begin scanning.</div>
         </div>
         <div class="vf-label" id="vfLabel" style="display:none;">SCANNING</div>
         <div class="attendance-toast" id="attendanceToast"></div>
@@ -771,6 +797,11 @@ function resizeOverlayTo(el){
   overlay.height = rect.height;
 }
 
+function setEmptyMessage(title, hint){
+  document.getElementById('emptyTitle').textContent = title;
+  document.getElementById('emptyHint').textContent = hint;
+}
+
 function showEmpty(show){
   emptyState.style.display = show ? 'flex' : 'none';
 }
@@ -778,7 +809,12 @@ function showEmpty(show){
 async function startCamera(){
   if(!modelsReady) return;
   stopAll(false);
+  setEmptyMessage('REQUESTING CAMERA', 'Allow camera access in your browser. You can also load an image instead.');
+  showEmpty(true);
   try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      throw new Error('Camera access is unavailable. Open this page over HTTPS in a supported browser.');
+    }
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
     video.srcObject = stream;
     video.style.display = 'block';
@@ -796,7 +832,17 @@ async function startCamera(){
     detectLoopCamera();
     startRecognitionTimer();
   }catch(err){
-    alert('Could not access the camera. Check browser permissions and try again.');
+    stopCamera();
+    video.style.display = 'none';
+    sourceStatus.textContent = 'NONE';
+    const messages = {
+      NotAllowedError: ['CAMERA BLOCKED', 'Allow camera access for this site in your browser settings, then select Start Camera again.'],
+      NotFoundError: ['NO CAMERA FOUND', 'Connect a camera, or select Load Image to scan a photo.'],
+      NotReadableError: ['CAMERA IN USE', 'Close other apps or tabs using the camera, then try again.']
+    };
+    const message = messages[err.name] || ['CAMERA UNAVAILABLE', err.message || 'Check browser camera permissions, or select Load Image instead.'];
+    setEmptyMessage(message[0], message[1]);
+    showEmpty(true);
     console.error(err);
   }
 }
@@ -822,6 +868,7 @@ function stopAll(showEmptyState = true){
   ctx.clearRect(0,0,overlay.width, overlay.height);
   mode = null;
   sourceStatus.textContent = 'NONE';
+  setEmptyMessage('CAMERA OFFLINE', 'Select Start Camera and allow camera access, or load an image to begin scanning.');
   camBtn.textContent = 'Start Camera';
   resetBtn.disabled = true;
   faceCountEl.textContent = '0';
@@ -1418,3 +1465,4 @@ if(adminUnlocked){
 </script>
 </body>
 </html>
+
