@@ -6,6 +6,18 @@ A browser-based face detection and attendance prototype built with HTML, CSS, Ja
 
 > This project is a learning and portfolio demo. It is not designed to secure or manage real attendance records.
 
+## Portfolio upgrade (prototype only)
+
+The dashboard displays enrolled, present, absent, and attendance percentage for the selected date. The admin attendance panel can export a date-filtered CSV (Excel-compatible) in addition to JSON. Daily check-ins use a separately testable helper and reject duplicate person/date entries.
+
+Run the pure JavaScript unit tests with Node.js 18 or later:
+
+```bash
+node --test tests/attendance.test.cjs
+```
+
+**Important:** This is still a browser-only learning prototype, not a secure biometric attendance product. Its client-side admin gate can be bypassed, browser storage is not protected, recognition can make mistakes, and uploaded photos can be used for demonstration. Only enroll consenting volunteers with disposable demo information. Do not enter real phone numbers or use it to make real attendance decisions.
+
 ## Features
 
 - Detect faces from a webcam or uploaded image
@@ -48,7 +60,7 @@ The admin check is implemented in client-side JavaScript. It is useful for demon
 
 ```text
 .
-├── index.html          # Main app and GitHub Pages entry point
+├── index.html          # Main app and GitHub Pages entry point\n├── attendance-core.js  # Attendance statistics, deduplication and CSV\n├── tests/attendance.test.cjs # Node unit tests
 ├── face_detect (4).html # Additional standalone HTML copy
 └── README.md           # Project documentation
 ```
