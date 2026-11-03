@@ -531,7 +531,7 @@
     97% { opacity: 0.4; }
     98% { opacity: 1; }
   }
-</style>
+.portfolio-banner{border:1px solid var(--amber);color:var(--amber);padding:12px 15px;margin-bottom:18px;font:11px var(--mono);line-height:1.6}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:18px}.summary-card{border:1px solid var(--line);background:var(--panel);padding:14px 10px}.summary-card strong{display:block;font:700 24px var(--mono);color:var(--phosphor);margin-top:8px}.summary-card span{font:10px var(--mono);color:var(--text-dim)}@media(max-width:520px){.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}</style>
 </head>
 <body>
 <div class="wrap">
@@ -551,7 +551,9 @@
     <button id="adminToggleBtn" style="font-family:var(--mono);font-size:10.5px;letter-spacing:0.06em;background:var(--panel);color:var(--text-dim);border:1px solid var(--line);padding:8px 12px;cursor:pointer;text-transform:uppercase;">🔒 Admin</button>
   </header>
 
-  <div class="grid">
+  <div class="portfolio-banner" role="note">⚠ COLLEGE PORTFOLIO PROTOTYPE — Not secure authentication or a real attendance service. Use consenting volunteers and demo data only. Face photos and descriptors remain in this browser.</div>
+<div class="summary-grid" aria-label="Attendance summary"><div class="summary-card"><span>ENROLLED</span><strong id="sumTotal">0</strong></div><div class="summary-card"><span>PRESENT</span><strong id="sumPresent">0</strong></div><div class="summary-card"><span>ABSENT</span><strong id="sumAbsent">0</strong></div><div class="summary-card"><span>ATTENDANCE</span><strong id="sumPercent">0%</strong></div></div>
+<div class="grid">
     <div>
       <div class="viewfinder" id="viewfinder">
         <div class="corner tl"></div>
@@ -638,7 +640,7 @@
             <div class="no-faces">No attendance marked for this date.</div>
           </div>
           <div class="hud-actions" style="margin-top:10px;">
-            <button id="exportAttendanceBtn">Export JSON</button>
+            <button id="exportAttendanceBtn">Export JSON</button><button id="exportCsvBtn">Export CSV</button>
             <button id="clearAttendanceBtn">Clear this date</button>
           </div>
         </div>
@@ -684,6 +686,7 @@
 
 </div>
 
+<script src="attendance-core.js"></script>
 <script>
 const video = document.getElementById('video');
 const photo = document.getElementById('photo');
@@ -754,10 +757,7 @@ let lastToastAt = 0;
 
 const RECOGNITION_THRESHOLD = 0.55; // lower = stricter match
 
-function todayStr(){
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-}
+function todayStr(){ return ScanlineAttendance.dayKey(new Date()); }
 
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
 
@@ -1061,6 +1061,7 @@ function persistRecords(){
 }
 
 function renderRecords(){
+  updateSummary();
   if(records.length === 0){
     recordsList.innerHTML = '<div class="no-faces">No faces saved yet.</div>';
     return;
@@ -1119,8 +1120,18 @@ function persistAttendance(){
   }
 }
 
+function updateSummary(){
+  const date = attendanceDateInput.value || todayStr();
+  const s = ScanlineAttendance.stats(records, attendance, date);
+  document.getElementById('sumTotal').textContent = s.total;
+  document.getElementById('sumPresent').textContent = s.present;
+  document.getElementById('sumAbsent').textContent = s.absent;
+  document.getElementById('sumPercent').textContent = s.percentage + '%';
+}
 function renderAttendanceForDate(){
+  updateSummary();
   if(!attendanceDateInput.value) attendanceDateInput.value = todayStr();
+updateSummary();
   const date = attendanceDateInput.value;
   const entries = attendance.filter(a => a.date === date).sort((a, b) => a.time.localeCompare(b.time));
   if(entries.length === 0){
@@ -1141,6 +1152,16 @@ function renderAttendanceForDate(){
 
 attendanceDateInput.addEventListener('change', renderAttendanceForDate);
 
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const date = attendanceDateInput.value || todayStr();
+  const csv = ScanlineAttendance.attendanceCsv(attendance, date);
+  const blob = new Blob(['\\uFEFF', csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'scanline_attendance_' + date + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
 exportAttendanceBtn.addEventListener('click', () => {
   if(attendance.length === 0){
     alert('No attendance records to export yet.');
@@ -1177,31 +1198,21 @@ function showAttendanceToast(text, already){
 
 function markAttendance(record){
   const date = todayStr();
-  const already = attendance.some(a => a.personId === record.id && a.date === date);
   const now = Date.now();
+  const result = ScanlineAttendance.mark(attendance, record, date, new Date().toISOString());
   const isSamePersonRecentToast = lastToastPersonId === record.id && (now - lastToastAt) < 6000;
-  if(already){
+  if(!result.added){
     if(!isSamePersonRecentToast){
       showAttendanceToast(`${record.name} — already marked today`, true);
-      lastToastPersonId = record.id;
-      lastToastAt = now;
+      lastToastPersonId = record.id; lastToastAt = now;
     }
     return;
   }
-  attendance.push({
-    id: record.id + '_' + date,
-    personId: record.id,
-    name: record.name,
-    phone: record.phone,
-    photo: record.photo,
-    date,
-    time: new Date().toISOString()
-  });
+  attendance = result.entries;
   persistAttendance();
   renderAttendanceForDate();
   showAttendanceToast(`✔ ${record.name} — attendance marked`, false);
-  lastToastPersonId = record.id;
-  lastToastAt = now;
+  lastToastPersonId = record.id; lastToastAt = now;
 }
 
 async function runRecognitionTick(){
