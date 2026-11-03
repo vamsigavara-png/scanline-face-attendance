@@ -29,7 +29,8 @@
   }
   function csvCell(value) {
     const s = String(value == null ? '' : value);
-    return '"' + s.replace(/"/g, '""') + '"';
+    const safe = /^[\\s]*[=+@-]/.test(s) ? "'" + s : s;
+    return '"' + safe.replace(/"/g, '""') + '"';
   }
   function attendanceCsv(entries, date) {
     const rows = entries.filter(e => e.date === date).sort((a,b) => String(a.time).localeCompare(String(b.time)));
